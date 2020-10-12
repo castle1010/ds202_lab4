@@ -9,22 +9,237 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+### Loading the Data
+```{r}
+library(readxl)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+defense <- read_excel('./cyclonesFootball2019.xlsx', sheet='Defensive')
+offense <- read_excel('./cyclonesFootball2019.xlsx', sheet='Offensive')
+bio <- read_excel('./cyclonesFootball2019.xlsx', sheet='Biography')
 ```
 
-## Including Plots
+## Part One: Cleaning the Data
 
-You can also embed plots, for example:
+### Although the three Excel sheets are loaded into R, they are not useful before some cleaning. Manipulate the three imported data frames, so that in the cleaned dataset:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+
+### 1. The player names and opponent names are factors.
+
+```{r}
+defClean <- defense %>% 
+  mutate_at(c('Name', 'Opponent_Opponent'), factor)
+offClean <- offense %>% 
+  mutate_at(c('Name', 'Opponent_Opponent'), factor)
+bioClean <- bio %>%
+  mutate_at(c('Name'), factor)
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+### 2. All offensive and defensive statistics are numerical. The Weight column in biogrpahy is also numeric.  (Optional: Learn to mutate multiple columns systematically using the ?across function in `dplyr)
+
+```{r}
+defClean <- defClean %>%
+  mutate(across(where(is.character), as.numeric)) %>%
+  mutate_at(c(3:11), ~replace(., is.na(.), 0))
+offClean <- offClean %>%
+  mutate(across(where(is.character), as.numeric)) %>%
+  mutate_at(c(3:12), ~replace(., is.na(.), 0))
+bioClean <- bioClean %>%
+  mutate(across(starts_with("Weight"), as.numeric))
+
+
+str(defClean)
+str(offClean)
+str(bioClean)
+
+```
+
+
+### 3. Change the Height column in biogrpahy into numeric. (Hint: Use a unit that works well)
+
+
+```{r}
+
+bioClean <- bioClean%>%
+   separate(Height, c('feet','inches'), sep='-')%>%
+   mutate_at(c(3:4), as.numeric)
+bioClean <- bioClean%>%
+  mutate(Height = feet*12 + inches)%>%
+  select(-c('feet','inches'))%>%
+  select(1:2, Height, everything())
+
+
+str(defClean)
+str(offClean)
+str(bioClean)
+
+```
+
+
+### By cleaning the three data frames in R, at the end of this step you should have the following three clean data frames: defClean, offClean, and bioClean. Print the structures of these data frames.
+
+
+### Part Two: Tidying
+ For the following questions, work on the cleaned data frames defClean, offClean, and bioClean.
+ 
+### 1. Reformat the defClean data frame into a tidy format using pivot_longer. The type of statistic (Tackles_Solo, Tackles_ASST, etc) is added as a new key column named stat.
+
+```{r}
+defClean <- defClean %>% 
+  pivot_longer(Tackles_Solo:Pass_PB, names_to = 'stat')
+```
+
+
+### 2. Compare the distributions of the defensive statistics. What defensive skills are rare?
+
+```{r}
+defClean %>%
+  ggplot(aes(value)) + geom_histogram() +facet_wrap(~stat) + 
+  labs(title="Defensive Stats for ISU Def Team")
+```
+
+### Answer: Some of the defensive skills that are rare are tackles_sack, turnover_ff, turnover_fr and turover_int as well as pass_pb.
+
+
+### 3. Did ISU have better defense against Iowa or Notre Dame? Answer this question by creating a scatterplot with x- and y-axes being the number of solo tackles (of each player). A large number of solo tackles is an indicator of good defense.
+
+
+```{r}
+
+defClean %>% 
+  filter((Opponent_Opponent == 'Iowa' | Opponent_Opponent == 'Notre Dame') & stat == 'Tackles_Solo') %>% 
+  pivot_wider(names_from = 'Opponent_Opponent', values_from = 'value') %>% 
+  select(Name, 'Iowa', 'Notre Dame') %>% 
+  ggplot(aes(`Iowa`, `Notre Dame`)) + 
+  geom_jitter() +
+  ggtitle('Solo Tackles for Iowa and Notre Dame')
+
+```
+
+### Answer: Iowa state has better defense against Notre Dame because more players from the team have higher solo tackles against Notre dame relative to University of Iowa
+
+
+### Now turn our attention to the player biography.
+
+### 4. Separate the Hometown column into two columns, namely the city and the state. Print the first few rows of these two columns. (Hint: look at the sep= argument of separate)
+
+```{r}
+bioClean <- bioClean%>% separate(Hometown, c('City', 'State'), sep=', ')
+head(bioClean)
+```
+
+### 5. How many players are there from each state?
+
+```{r}
+bioClean %>%
+  group_by(State) %>%
+  summarise(nState=n()) %>%
+  arrange(desc(nState))
+```
+
+### Answer: Iowa has the most players with a grand total of 35.
+
+
+### Part Three: Joining Data Frames
+
+### 1. Find which states do the ISU defensive and offensive players come from. Create an appropriate summary.
+
+```{r}
+offState <- offClean %>%
+  select(Name) %>%
+  distinct() %>%
+  left_join(bioClean, by=c("Name"))
+offState %>%
+  group_by(State) %>%
+  drop_na() %>%
+  summarise(nState=n()) %>%
+  arrange(desc(nState))
+defState <- defClean %>%
+  pivot_wider(names_from='stat', values_from='value') %>%
+  select(Name) %>%
+  distinct() %>%
+  left_join(bioClean, by=c("Name"))
+defState %>%
+  group_by(State) %>%
+  drop_na() %>%
+  summarise(nState=n()) %>%
+  arrange(desc(nState))
+
+
+```
+
+
+### 2. How does the performance of quarterback Brock Purdy relate to the performance of the ISU team?
+
+```{r}
+Purdy <- offClean %>% filter(Name == "Purdy, Brock")
+summary(Purdy)
+summary(offClean)
+
+dat1 <- offClean %>%
+  group_by(Opponent_Opponent)%>%
+  summarise(Rushing_YDS = sum(Rushing_YDS, na.rm = TRUE), Rushing_TD = sum(Rushing_TD, na.rm = TRUE))
+datPurdy <- offClean %>%
+  filter(Name == 'Purdy, Brock') %>%
+  select(Opponent_Opponent, Passing_YDS)
+datPurdyxTeam <- dat1 %>%
+  left_join(datPurdy)
+print(datPurdyxTeam)
+ggplot(datPurdyxTeam, aes(x = Passing_YDS, Rushing_YDS, shape = factor(Rushing_TD))) + geom_point(na.rm=TRUE)
+
+```
+
+### Answer: I first start by comparing the basic stats of Brock to the rest of the team by using the summary functions. We can see that he has a higher passing touchdown than the team which shows he outpferoms the team. I then look at the correlation between passing yards and rushing yards. We can see that there is a positive relationship and he performs at a very high level
+
+
+### 3. Which ISU player(s) made big progress over the last year? Compare the 2019 and the 2018 data here.
+
+
+```{r}
+
+defense2 <- read_excel('./cyclonesFootball2018.xlsx', sheet='Defensive')
+offense2 <- read_excel('./cyclonesFootball2018.xlsx', sheet='Offensive')
+
+
+
+defClean2 <- defense2 %>% mutate(Tackles_Solo = as.numeric(Tackles_Solo))
+offClean2 <- offense2 %>% mutate(Receiving_YDS = as.numeric(Receiving_YDS))
+offRec <- inner_join(offClean, offClean2, by='Name') %>% 
+           mutate(Receiving_YDS_Diff = Receiving_YDS.x - Receiving_YDS.y) %>% 
+           select(Name, Receiving_YDS_Diff) %>% 
+           arrange(-Receiving_YDS_Diff)
+offRec
+defClean2 <- defense %>% mutate(Tackles_Solo = as.numeric(Tackles_Solo))
+defClean3 <- defense2 %>% mutate(Tackles_Solo = as.numeric(Tackles_Solo))
+deftac<- inner_join(defClean2, defClean3, by='Name') %>% 
+           mutate(Tackles_Solo_Diff = Tackles_Solo.x - Tackles_Solo.y) %>% 
+           select(Name, Tackles_Solo_Diff) %>% 
+           arrange(-Tackles_Solo_Diff)
+deftac
+```
+
+
+### Answer: I compared the receiving yards and the tackes to get an idea for both offenseive and defensive performance. We can see that Lewis  and Johnson have imporved significally. On the offense we can see Jones and Milton have have also upped their game and improved.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
